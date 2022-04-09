@@ -74,7 +74,7 @@ func main() {
 				continue
 			}
 
-			langSet := map[string]bool{"go": true, "python": true, "rust": true, "dart": true, "ts": true, "cs": true}
+			langSet := map[string]bool{"go": true, "python": true, "rust": true, "dart": true, "ts": true, "cs": true, "kt": true}
 			if lang == "" {
 				lang = args[i]
 				if !langSet[lang] {
@@ -110,6 +110,7 @@ func main() {
 		"dart":   ".dart",
 		"ts":     ".ts",
 		"cs":     ".cs",
+		"kt":     ".kt",
 	}
 
 	var outputFileName string = inputfile + langExt[lang]
