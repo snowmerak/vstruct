@@ -61,7 +61,7 @@ func TypeConv(in string) string {
 	case "string":
 		return "String"
 	case "bytes":
-		return "ByteArray"
+		return "UByteArray"
 	default:
 		return NameConv(in)
 	}
