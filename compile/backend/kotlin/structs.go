@@ -11,26 +11,27 @@ func writeStructs(w io.Writer, i *ir.IR) {
 	for _, s := range i.Structs {
 		fmt.Fprintf(w, "public class %s constructor(size: Int) {\n", NameConv(s.Name))
 
-		fmt.Fprintf(w, "\tprivate var value: ByteArray\n")
-		fmt.Fprintf(w, "\tinit { this.value = ByteArray(size) }\n")
+		fmt.Fprintf(w, "\tprivate var value: UByteArray\n")
+		fmt.Fprintf(w, "\tinit { this.value = UByteArray(size) }\n")
 
-		fmt.Fprintf(w, "\t\tpublic static %s FromBytes(byte[] bytes)\n\t\t{\n", NameConv(s.Name))
-		fmt.Fprintf(w, "\t\t\tvar s = new %s(bytes.Length);\n", NameConv(s.Name))
-		fmt.Fprintf(w, "\t\t\tArray.Copy(bytes, 0, s.value, 0, bytes.Length);\n")
-		fmt.Fprint(w, "\t\t\treturn s;\n")
+		fmt.Fprintf(w, "\tcompanion object {\n")
+		fmt.Fprintf(w, "\t\tfun fromBytes(bytes: UByteArray): %s {\n", NameConv(s.Name))
+		fmt.Fprintf(w, "\t\t\tval a = %s(bytes.size)\n", NameConv(s.Name))
+		fmt.Fprintf(w, "\t\t\tbytes.copyInto(a.value)\n")
+		fmt.Fprint(w, "\t\t\treturn a\n")
 		fmt.Fprint(w, "\t\t}\n\n")
 
-		fmt.Fprintf(w, "\t\tpublic static %s Serialize(%s dst", TypeConv(s.Name), TypeConv(s.Name))
+		fmt.Fprintf(w, "\t\tfun Serialize(dst: %s", TypeConv(s.Name))
 		var allFields []*ir.Field
 		allFields = append(allFields, s.FixedFields...)
 		allFields = append(allFields, s.DynamicFields...)
 		for _, f := range allFields {
-			fmt.Fprintf(w, ", %s %s", TypeConv(f.Type), NameConv(f.Name))
+			fmt.Fprintf(w, ", %s: %s", NameConv(f.Name), TypeConv(f.Type))
 		}
 
 		var IsFixed bool = len(s.DynamicFields) == 0
 
-		fmt.Fprintf(w, ")\n\t\t{\n")
+		fmt.Fprintf(w, "): %s {\n", TypeConv(s.Name))
 		// if IsFixed && len(s.FixedFields) > 0 {
 		// 	fmt.Fprintf(w, "_ = dst[%d]\n", s.TotalFixedFieldSize-1)
 		// } else if !IsFixed {
@@ -40,175 +41,126 @@ func writeStructs(w io.Writer, i *ir.IR) {
 		for _, f := range s.FixedFields {
 			switch f.TypeInfo.FieldType {
 			case ir.FieldType_STRUCT:
-				fmt.Fprintf(w, "\t\t\tArray.Copy(%s.value, %d, dst.value, %d, %d);\n", NameConv(f.Name), 0, f.Offset, f.TypeInfo.Size)
+				fmt.Fprintf(w, "\t\t\t%s.value.CopyInto(dst.value, %d, %d, %d)\n", NameConv(f.Name), f.Offset, 0, f.TypeInfo.Size)
 			case ir.FieldType_BOOL:
-				fmt.Fprintf(w, "\t\t\tdst.value[%d] = (byte)%s;\n", f.Offset, NameConv(f.Name))
+				fmt.Fprintf(w, "\t\t\tdst.value[%d] = %s.toUByte()\n", f.Offset, NameConv(f.Name))
 			case ir.FieldType_INT:
-				fmt.Fprintf(w, "\t\t\tvar __tmp_%d = BitConverter.GetBytes(%s);\n", tmpIdx, NameConv(f.Name))
-				fmt.Fprintf(w, "\t\t\tif (!BitConverter.IsLittleEndian)\n\t\t\t{\n\t\t\t\tArray.Reverse(__tmp_%d);\n\t\t\t}\n", tmpIdx)
-				fmt.Fprintf(w, "\t\t\tArray.Copy(__tmp_%d, 0, dst.value, %d, %d);\n", tmpIdx, f.Offset, f.TypeInfo.Size)
+				fmt.Fprintf(w, "\t\t\tfor (i in 0..%d) {\n", f.TypeInfo.Size-1)
+				fmt.Fprintf(w, "\t\t\t\tdst.value[%d+i] = (%s shr (%d - i)).toUByte()\n", f.Offset, NameConv(f.Name), f.TypeInfo.Size*7)
+				fmt.Fprintf(w, "\t\t\t}\n")
 			case ir.FieldType_UINT:
-				fmt.Fprintf(w, "\t\t\tvar __tmp_%d = BitConverter.GetBytes(%s);\n", tmpIdx, NameConv(f.Name))
-				fmt.Fprintf(w, "\t\t\tif (!BitConverter.IsLittleEndian)\n\t\t\t{\n\t\t\t\tArray.Reverse(__tmp_%d);\n\t\t\t}\n", tmpIdx)
-				fmt.Fprintf(w, "\t\t\tArray.Copy(__tmp_%d, 0, dst.value, %d, %d);\n", tmpIdx, f.Offset, f.TypeInfo.Size)
+				fmt.Fprintf(w, "\t\t\tfor (i in 0..%d) {\n", f.TypeInfo.Size-1)
+				fmt.Fprintf(w, "\t\t\t\tdst.value[%d+i] = (%s shr (%d - i)).toUByte()\n", f.Offset, NameConv(f.Name), f.TypeInfo.Size*8)
+				fmt.Fprintf(w, "\t\t\t}\n")
 			case ir.FieldType_FLOAT:
-				fmt.Fprintf(w, "\t\t\tvar __tmp_%d = BitConverter.GetBytes(%s);\n", tmpIdx, NameConv(f.Name))
-				fmt.Fprintf(w, "\t\t\tif (!BitConverter.IsLittleEndian)\n\t\t\t{\n\t\t\t\tArray.Reverse(__tmp_%d);\n\t\t\t}\n", tmpIdx)
-				fmt.Fprintf(w, "\t\t\tArray.Copy(__tmp_%d, 0, dst.value, %d, %d);\n", tmpIdx, f.Offset, f.TypeInfo.Size)
+				fmt.Fprintf(w, "\t\t\tvar __tmp_%d = %s.toBits()\n", tmpIdx, NameConv(f.Name))
+				fmt.Fprintf(w, "\t\t\tfor (i in 0..%d) {\n", f.TypeInfo.Size-1)
+				fmt.Fprintf(w, "\t\t\t\tdst.value[%d+i] = (__tmp_%d shr (%d - i)).toUByte()\n", f.Offset, tmpIdx, f.TypeInfo.Size*8)
+				fmt.Fprintf(w, "\t\t\t}\n")
 			case ir.FieldType_ENUM:
 				if f.TypeInfo.Size == 1 {
-					fmt.Fprintf(w, "\t\t\tdst.value[%d] = (byte)%s;\n", f.Offset, NameConv(f.Name))
+					fmt.Fprintf(w, "\t\t\tdst.value[%d] = %s.UByte()\n", f.Offset, NameConv(f.Name))
 				} else {
-					fmt.Fprintf(w, "\t\t\tvar __tmp_%d = BitConverter.GetBytes(%s);\n", tmpIdx, NameConv(f.Name))
-					fmt.Fprintf(w, "\t\t\tif (!BitConverter.IsLittleEndian)\n\t\t\t{\n\t\t\t\tArray.Reverse(__tmp_%d);\n\t\t\t}\n", tmpIdx)
-					fmt.Fprintf(w, "\t\t\tArray.Copy(__tmp_%d, 0, dst.value, %d, %d);\n", tmpIdx, f.Offset, f.TypeInfo.Size)
+					fmt.Fprintf(w, "\t\t\tfor (i in 0..%d) {\n", f.TypeInfo.Size-1)
+					fmt.Fprintf(w, "\t\t\t\tdst.value[%d+i] = (%s shr (%d - i)).toUByte()\n", f.Offset, NameConv(f.Name), f.TypeInfo.Size*8)
+					fmt.Fprintf(w, "\t\t\t}\n")
 				}
 			}
 			tmpIdx++
 		}
 		fmt.Fprintf(w, "\n")
 		if !IsFixed {
-			fmt.Fprintf(w, "\t\t\tvar __index = (ulong)%d;\n", s.DynamicFieldHeadOffsets[len(s.DynamicFieldHeadOffsets)-1])
+			fmt.Fprintf(w, "\t\t\tvar __index = %d.toULong()\n", s.DynamicFieldHeadOffsets[len(s.DynamicFieldHeadOffsets)-1])
 			for i, f := range s.DynamicFields {
 				switch f.TypeInfo.FieldType {
 				case ir.FieldType_STRING:
-					fmt.Fprintf(w, "\t\t\tvar __tmp_%d = (ulong)System.Text.Encoding.UTF8.GetBytes(%s).Length +__index;\n", tmpIdx, NameConv(f.Name))
+					fmt.Fprintf(w, "\t\t\tvar __tmp_%d = %s.toByteArray(Charsets.UTF_8).size.toULong() +__index;\n", tmpIdx, NameConv(f.Name))
 				case ir.FieldType_BYTES:
-					fmt.Fprintf(w, "\t\t\tvar __tmp_%d = (ulong)%s.Length +__index;\n", tmpIdx, NameConv(f.Name))
+					fmt.Fprintf(w, "\t\t\tvar __tmp_%d = %s.size.toULong() +__index;\n", tmpIdx, NameConv(f.Name))
 				default:
-					fmt.Fprintf(w, "\t\t\tvar __tmp_%d = (ulong)%s.value.Length +__index;\n", tmpIdx, NameConv(f.Name))
+					fmt.Fprintf(w, "\t\t\tvar __tmp_%d = %s.value.size.toULong() +__index;\n", tmpIdx, NameConv(f.Name))
 				}
-				fmt.Fprintf(w, "\t\t\tvar __tmp_%d_len = BitConverter.GetBytes(__tmp_%d);\n", tmpIdx, tmpIdx)
-				fmt.Fprintf(w, "\t\t\tif (!BitConverter.IsLittleEndian)\n\t\t\t{\n\t\t\t\tArray.Reverse(__tmp_%d_len);\n\t\t\t}\n", tmpIdx)
-				fmt.Fprintf(w, "\t\t\tArray.Copy(__tmp_%d_len, 0, dst.value, %d, 8);\n", tmpIdx, s.DynamicFieldHeadOffsets[i])
+				fmt.Fprintf(w, "\t\t\tfor (i in 0..7) {\n")
+				fmt.Fprintf(w, "\t\t\t\tdst.value[%d+i] = (__tmp_%d shr (7 - i)).toUByte()\n", s.DynamicFieldHeadOffsets[i], tmpIdx)
+				fmt.Fprintf(w, "\t\t\t}\n")
 
 				switch f.TypeInfo.FieldType {
 				case ir.FieldType_STRING:
-					fmt.Fprintf(w, "\t\t\tvar __buf_%d = System.Text.Encoding.UTF8.GetBytes(%s);\n", tmpIdx, NameConv(f.Name))
+					fmt.Fprintf(w, "\t\t\tvar __buf_%d = %s.toByteArray(Charsets.UTF_8).map { it.toUByte() }.toUByteArray()\n", tmpIdx, NameConv(f.Name))
 				case ir.FieldType_BYTES:
-					fallthrough
+					fmt.Fprintf(w, "\t\t\tvar __buf_%d = %s\n", tmpIdx, NameConv(f.Name))
 				default:
-					fmt.Fprintf(w, "\t\t\tvar __buf_%d = %s;\n", tmpIdx, NameConv(f.Name))
+					fmt.Fprintf(w, "\t\t\tvar __buf_%d = %s.value\n", tmpIdx, NameConv(f.Name))
 				}
-				switch f.TypeInfo.FieldType {
-				case ir.FieldType_STRUCT:
-					fmt.Fprintf(w, "\t\t\tif (!BitConverter.IsLittleEndian)\n\t\t\t{\n\t\t\t\tArray.Reverse(__buf_%d.value);\n\t\t\t}\n", tmpIdx)
-				default:
-					fmt.Fprintf(w, "\t\t\tif (!BitConverter.IsLittleEndian)\n\t\t\t{\n\t\t\t\tArray.Reverse(__buf_%d);\n\t\t\t}\n", tmpIdx)
-				}
-				switch f.TypeInfo.FieldType {
-				case ir.FieldType_STRUCT:
-					fmt.Fprintf(w, "\t\t\tArray.Copy(__buf_%d.value, 0, dst.value, (long)__index, (long)__tmp_%d-(long)__index);\n", tmpIdx, tmpIdx)
-				case ir.FieldType_BYTES:
-					fallthrough
-				case ir.FieldType_STRING:
-					fmt.Fprintf(w, "\t\t\tArray.Copy(__buf_%d, 0, dst.value, (long)__index, (long)__tmp_%d-(long)__index);\n", tmpIdx, tmpIdx)
-				}
-				if i != len(s.DynamicFields)-1 {
-					switch f.TypeInfo.FieldType {
-					case ir.FieldType_STRING:
-						fmt.Fprintf(w, "\t\t\t__index += (ulong)(ulong)System.Text.Encoding.UTF8.GetBytes(%s).Length;\n", NameConv(f.Name))
-					case ir.FieldType_BYTES:
-						fmt.Fprintf(w, "\t\t\t__index += (ulong)%s.Length;\n", NameConv(f.Name))
-					default:
-						fmt.Fprintf(w, "\t\t\t__index += (ulong)%s.value.Length;\n", NameConv(f.Name))
-					}
-				}
+				fmt.Fprintf(w, "\t\t\t__buf_%d.copyInto(dst.value, __index, 0, __tmp_%d-__index)\n", tmpIdx, tmpIdx)
+				fmt.Fprintf(w, "__index = __tmp_%d\n", tmpIdx)
 				tmpIdx++
 			}
 		}
-		fmt.Fprintf(w, "\t\t\treturn dst;\n")
+		fmt.Fprintf(w, "\t\t\treturn dst\n")
 		fmt.Fprintf(w, "\t\t}\n\n")
 
-		fmt.Fprintf(w, "\t\tpublic static %s New(", TypeConv(s.Name))
+		fmt.Fprintf(w, "\t\tfun New(")
 		for i, f := range allFields {
 			if i != 0 {
 				fmt.Fprintf(w, ", ")
 			}
-			fmt.Fprintf(w, "%s %s", TypeConv(f.Type), NameConv(f.Name))
+			fmt.Fprintf(w, "%s: %s", NameConv(f.Name), TypeConv(f.Type))
 		}
-		fmt.Fprintf(w, ")\n\t\t{\n")
-		fmt.Fprintf(w, "\t\t\tvar __vstruct__size = (ulong)%d ", s.DynamicFieldHeadOffsets[len(s.DynamicFieldHeadOffsets)-1])
+		fmt.Fprintf(w, "): %s {\n", TypeConv(s.Name))
+		fmt.Fprintf(w, "\t\t\tvar __vstruct__size = %d.toULong() ", s.DynamicFieldHeadOffsets[len(s.DynamicFieldHeadOffsets)-1])
 		for _, f := range s.DynamicFields {
 			switch f.TypeInfo.FieldType {
 			case ir.FieldType_STRING:
-				fmt.Fprintf(w, "+ (ulong)System.Text.Encoding.UTF8.GetBytes(%s).Length ", NameConv(f.Name))
+				fmt.Fprintf(w, "+ %s.toByteArray(Charsets.UTF_8).size.toULong() ", NameConv(f.Name))
 			case ir.FieldType_BYTES:
-				fmt.Fprintf(w, "+ (ulong)%s.Length ", NameConv(f.Name))
+				fmt.Fprintf(w, "+ %s.size.toULong() ", NameConv(f.Name))
 			default:
-				fmt.Fprintf(w, "+ (ulong)%s.value.Length ", NameConv(f.Name))
+				fmt.Fprintf(w, "+ %s.value.size.toULong() ", NameConv(f.Name))
 			}
 		}
-		fmt.Fprintf(w, ";\n")
-		fmt.Fprintf(w, "\t\t\tvar __vstruct__buf = %s.FromBytes(new byte[__vstruct__size]);\n", TypeConv(s.Name))
+		fmt.Fprintf(w, "\n")
+		fmt.Fprintf(w, "\t\t\tvar __vstruct__buf = %s(__vstruct__size.toInt())\n", TypeConv(s.Name))
 		fmt.Fprintf(w, "\t\t\t__vstruct__buf = %s.Serialize(__vstruct__buf", TypeConv(s.Name))
 		for _, f := range allFields {
 			fmt.Fprintf(w, ", %s", NameConv(f.Name))
 		}
-		fmt.Fprintf(w, ");\n")
-		fmt.Fprintf(w, "\t\t\treturn __vstruct__buf;\n")
+		fmt.Fprintf(w, ")\n")
+		fmt.Fprintf(w, "\t\t\treturn __vstruct__buf\n")
 		fmt.Fprintf(w, "\t\t}\n\n")
 
-		fmt.Fprintf(w, "\t\tpublic byte[] value = new byte[0];\n")
+		// companion end
+		fmt.Fprint(w, "\t}\n\n")
 
 		for _, f := range s.FixedFields {
-			fmt.Fprintf(w, "\t\tpublic %s Get%s()\n\t\t{\n", TypeConv(f.Type), NameConv(f.Name))
+			fmt.Fprintf(w, "\tfun Get%s(): %s {\n", NameConv(f.Name), TypeConv(f.Type))
 			switch f.TypeInfo.FieldType {
 			case ir.FieldType_BOOL:
-				fmt.Fprintf(w, "\t\t\treturn s[%d] != 0;\n", f.Offset)
+				fmt.Fprintf(w, "\t\treturn this.value[%d] != 0\n", f.Offset)
 			case ir.FieldType_UINT:
-				fmt.Fprintf(w, "\t\t\tvar buf = new byte[%d];\n", f.TypeInfo.Size)
-				fmt.Fprintf(w, "\t\t\tArray.Copy(this.value, %d, buf, 0, %d);\n", f.Offset, f.TypeInfo.Size)
-				fmt.Fprint(w, "\t\t\tif (!BitConverter.IsLittleEndian)\n\t\t\t{\n\t\t\t\tArray.Reverse(buf);\n\t\t\t}\n")
-				switch f.TypeInfo.Size {
-				case 1:
-					fmt.Fprintf(w, "\t\t\treturn ((byte)buf[0]);\n")
-				case 2:
-					fmt.Fprintf(w, "\t\t\treturn BitConverter.ToUInt16(buf, 0);\n")
-				case 4:
-					fmt.Fprintf(w, "\t\t\treturn BitConverter.ToUInt32(buf, 0);\n")
-				case 8:
-					fmt.Fprintf(w, "\t\t\treturn BitConverter.ToUInt64(buf, 0);\n")
-				}
+				fmt.Fprintf(w, "\t\tvar __v: %s = 0\n", NumberConv(true, f.TypeInfo.Size*8))
+				fmt.Fprintf(w, "\t\tfor i in 0..%d {\n", f.TypeInfo.Size*8-1)
+				fmt.Fprintf(w, "\t\t\t__v = (this.value[%d+i].to%s() shl (i * 8)) or __v\n", f.Offset, NumberConv(true, f.TypeInfo.Size*8))
+				fmt.Fprintf(w, "\t\t}\n")
 			case ir.FieldType_INT:
-				fmt.Fprintf(w, "\t\t\tvar buf = new byte[%d];\n", f.TypeInfo.Size)
-				fmt.Fprintf(w, "\t\t\tArray.Copy(this.value, %d, buf, 0, %d);\n", f.Offset, f.TypeInfo.Size)
-				fmt.Fprint(w, "\t\t\tif (!BitConverter.IsLittleEndian)\n\t\t\t{\n\t\t\t\tArray.Reverse(buf);\n\t\t\t}\n")
-				switch f.TypeInfo.Size {
-				case 1:
-					fmt.Fprintf(w, "\t\t\treturn ((sbyte)buf[0]);\n")
-				case 2:
-					fmt.Fprintf(w, "\t\t\treturn BitConverter.ToInt16(buf, 0);\n")
-				case 4:
-					fmt.Fprintf(w, "\t\t\treturn BitConverter.ToInt32(buf, 0);\n")
-				case 8:
-					fmt.Fprintf(w, "\t\t\treturn BitConverter.ToInt64(buf, 0);\n")
-				}
+				fmt.Fprintf(w, "\t\tvar __v: %s = 0\n", NumberConv(false, f.TypeInfo.Size*8))
+				fmt.Fprintf(w, "\t\tfor i in 0..%d {\n", f.TypeInfo.Size*8-1)
+				fmt.Fprintf(w, "\t\t\t__v = (this.value[%d+i].to%s() shl (i * 8)) or __v\n", f.Offset, NumberConv(false, f.TypeInfo.Size*8))
+				fmt.Fprintf(w, "\t\t}\n")
 			case ir.FieldType_FLOAT:
-				fmt.Fprintf(w, "\t\t\tvar buf = new byte[%d];\n", f.TypeInfo.Size)
-				fmt.Fprintf(w, "\t\t\tArray.Copy(this.value, %d, buf, 0, %d);\n", f.Offset, f.TypeInfo.Size)
-				fmt.Fprint(w, "\t\t\tif (!BitConverter.IsLittleEndian)\n\t\t\t{\n\t\t\t\tArray.Reverse(buf);\n\t\t\t}\n")
-				switch f.TypeInfo.Size {
-				case 4:
-					fmt.Fprintf(w, "\t\t\treturn BitConverter.ToSingle(buf, 0);\n")
-				case 8:
-					fmt.Fprintf(w, "\t\t\treturn BitConverter.ToDouble(buf, 0);\n")
-				}
+				fmt.Fprintf(w, "\t\tvar __v: %s = 0\n", NumberConv(false, f.TypeInfo.Size*8))
+				fmt.Fprintf(w, "\t\tfor i in 0..%d {\n", f.TypeInfo.Size*8-1)
+				fmt.Fprintf(w, "\t\t\t__v = (this.value[%d+i].to%s() shl (i * 8)) or __v\n", f.Offset, NumberConv(false, f.TypeInfo.Size*8))
+				fmt.Fprintf(w, "\t\t}\n")
+				fmt.Fprintf(w, "\t\treturn %s.fromBits(%s)\n", TypeConv(f.Type), NumberConv(false, f.TypeInfo.Size*8))
 			case ir.FieldType_ENUM:
 				if f.TypeInfo.Size != 1 {
-					fmt.Fprintf(w, "\t\t\tvar buf = new Byte[%d];\n", f.TypeInfo.Size)
-					fmt.Fprintf(w, "\t\t\tArray.Copy(this.value, %d, buf, 0, %d);\n", f.Offset, f.TypeInfo.Size)
-					fmt.Fprint(w, "\t\t\tif (!BitConverter.IsLittleEndian)\n\t\t\t{\n\t\t\t\tArray.Reverse(buf);\n\t\t\t}\n")
-					switch f.TypeInfo.Size {
-					case 2:
-						fmt.Fprintf(w, "\t\t\treturn (%s)((ushort)BitConverter.ToUInt16(buf, 0));\n", NameConv(f.Type))
-					case 4:
-						fmt.Fprintf(w, "\t\t\treturn (%s)((uint)BitConverter.ToUInt32(buf, 0));\n", NameConv(f.Type))
-					case 8:
-						fmt.Fprintf(w, "\t\t\treturn (%s)((ulong)BitConverter.ToUInt64(buf, 0));\n", NameConv(f.Type))
-					}
+					fmt.Fprintf(w, "\t\tvar __v: %s = 0\n", NumberConv(true, f.TypeInfo.Size*8))
+					fmt.Fprintf(w, "\t\tfor i in 0..%d {\n", f.TypeInfo.Size*8-1)
+					fmt.Fprintf(w, "\t\t\t__v = (this.value[%d+i].to%s() shl (i * 8)) or __v\n", f.Offset, NumberConv(true, f.TypeInfo.Size*8))
+					fmt.Fprintf(w, "\t\t}\n")
 				} else {
-					fmt.Fprintf(w, "\t\t\treturn (%s)(this.value[%d]);\n", TypeConv(f.Type), f.Offset)
+					fmt.Fprintf(w, "\t\t\treturn this.value[%d].to%s();\n", f.Offset, TypeConv(f.Type))
 				}
 			case ir.FieldType_STRUCT:
 				fmt.Fprintf(w, "\t\t\tvar buf = new Byte[%d];\n", f.TypeInfo.Size)
