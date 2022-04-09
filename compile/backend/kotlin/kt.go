@@ -15,9 +15,8 @@ func Generate(w io.Writer, i *ir.IR, packageName string) error {
 	writeStructs(&codedataBuf, i)
 	output := fmt.Sprintf(
 		`package vstruct.%s
-{
+
 %s
-}
 `,
 		packageName,
 		codedataBuf.String(),
